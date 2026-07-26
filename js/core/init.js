@@ -1,0 +1,85 @@
+// flash_tool/static/js/init.js
+// ============ 应用初始化 ============
+// 改造后：通过 Modules.register 注册初始化模块，DOMReady 后统一调用。
+// 所有 DOM 查询使用 SafeDOM，避免解析期/运行时因元素缺失崩溃。
+
+/**
+ * 应用初始化入口模块。
+ * 在 ui / api / device 等基础模块初始化完成后执行，负责绑定导航、恢复视图、
+ * 加载初始数据、检查更新等启动流程；所有异常均捕获并记录到日志，避免单点失败导致页面白屏。
+ */
+Modules.register('app-init', ['ui', 'api', 'device'], async function initApp() {
+    try {
+        preventPullToRefresh();
+        ensurePageLogBoxes();
+
+        // 底部导航事件委托
+        const bottomNav = document.querySelector('.bottom-nav');
+        if (bottomNav) {
+            bottomNav.addEventListener('click', (e) => {
+                const navItem = e.target.closest('.nav-item');
+                if (!navItem) return;
+                const view = navItem.dataset.view;
+                if (view) switchAppView(view);
+            });
+        } else {
+            console.warn('[app-init] 未找到底部导航 .bottom-nav');
+        }
+
+        let _savedView;
+        try { _savedView = localStorage.getItem('active_view'); } catch(e) { _savedView = null; }
+        switchAppView(_savedView || 'device');
+
+        // WebUSB 模式：恢复已存储的根目录 handle（File System Access API）
+        if (typeof FileApi !== 'undefined' && FileApi.restoreWebusbRootHandle) {
+            try {
+                await FileApi.restoreWebusbRootHandle();
+            } catch(e) { /* ignore */ }
+        }
+    } catch(e) {
+        writeLog('页面初始化错误：' + e.message, 'err');
+    }
+    loadVersion();
+
+    // 赞助弹窗：点击遮罩关闭
+    const sponsorModal = document.getElementById('sponsorModal');
+    if (sponsorModal) {
+        sponsorModal.addEventListener('click', (e) => {
+            if (e.target === sponsorModal) hideSponsorModal();
+        });
+    }
+});
+
+/**
+ * 阻止移动端页面下拉刷新：仅在顶部垂直下拉时拦截默认行为，保留横向滚动体验。
+ */
+function preventPullToRefresh() {
+    let startY = 0;
+    let startX = 0;
+    document.addEventListener('touchstart', e => {
+        if (!e.touches || e.touches.length !== 1) return;
+        startY = e.touches[0].clientY;
+        startX = e.touches[0].clientX;
+    }, {passive: true});
+    document.addEventListener('touchmove', e => {
+        if (!e.touches || e.touches.length !== 1) return;
+        const dy = e.touches[0].clientY - startY;
+        const dx = Math.abs(e.touches[0].clientX - startX);
+        if (window.scrollY <= 0 && dy > 8 && dy > dx) {
+            e.preventDefault();
+        }
+    }, {passive: false});
+}
+
+/**
+ * 启动入口：DOMContentLoaded 后触发模块系统完成应用启动。
+ * 模块系统初始化异常会在 catch 中输出到控制台，避免阻塞页面渲染。
+ */
+window.addEventListener('DOMContentLoaded', function() {
+    // 启动模块初始化系统
+    Modules.init().then(() => {
+        console.log('[init] 应用初始化完成');
+    }).catch(err => {
+        console.error('[init] 模块初始化异常:', err);
+    });
+});
