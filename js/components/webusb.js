@@ -17,7 +17,7 @@ import {
     WebUsbTransport,
     FASTBOOT_USB_FILTER,
     setLogLevel as fbSetLogLevel,
-} from '../lib/fastboot.mjs?v=2';
+} from '../lib/fastboot.mjs?v=3';
 
 import {
     Adb,
@@ -366,11 +366,14 @@ function detectDeviceMode(device) {
     if (!device || !device.configuration) return 'none';
     const ifaces = device.configuration.interfaces;
     for (let i = 0; i < ifaces.length; i++) {
-        const alt = ifaces[i].alternate;
-        if (!alt) continue;
-        if (alt.interfaceClass === 0xFF && alt.interfaceSubclass === 0x42) {
-            if (alt.interfaceProtocol === 0x01) return 'adb';
-            if (alt.interfaceProtocol === 0x03) return 'fastboot';
+        // Check all alternate settings, not just the selected one
+        const alternates = ifaces[i].alternates || [ifaces[i].alternate];
+        for (const alt of alternates) {
+            if (!alt) continue;
+            if (alt.interfaceClass === 0xFF && alt.interfaceSubclass === 0x42) {
+                if (alt.interfaceProtocol === 0x01) return 'adb';
+                if (alt.interfaceProtocol === 0x03) return 'fastboot';
+            }
         }
     }
     return 'none';
@@ -483,10 +486,27 @@ function validateWebUsbScriptImages() {
     const missing = [];
     for (let i = 0; i < stepList.length; i++) {
         const step = stepList[i];
-        if (step.type !== 'flash' || !step.fileName) continue;
-        const cached = romImageCache[step.fileName];
-        if (!cached || !cached.bytes || cached.bytes.length === 0) {
-            missing.push(step.fileName);
+        if (step.type !== 'flash') continue;
+        // 旧体系：检查 romImageCache[step.fileName]
+        if (step.fileName) {
+            const cached = romImageCache[step.fileName];
+            if (!cached || !cached.bytes || cached.bytes.length === 0) {
+                missing.push(step.fileName);
+            }
+            continue;
+        }
+        // 新体系：检查 fileObj / fileHandle / webusbScriptFileMap / 路径可解析性
+        // fileObj 直接可用 — 不算缺失
+        if (step.fileObj && step.fileObj instanceof Blob) continue;
+        // fileHandle 可恢复 — 不算缺失（权限可能在执行时才检查）
+        if (step.fileHandle) continue;
+        // webusbScriptFileMap 已有缓存 — 不算缺失
+        if (typeof webusbScriptFileMap !== 'undefined' && webusbScriptFileMap && step.imagePath) {
+            if (webusbScriptFileMap.get(step.imagePath)) continue;
+        }
+        // 有 imagePath 但无上述任何来源 — 标记为缺失
+        if (step.imagePath || step.fileName) {
+            missing.push(step.imagePath || step.fileName);
         }
     }
     return { ok: missing.length === 0, missing };
@@ -704,8 +724,43 @@ async function doWebUsbBatchFlash() {
             appendBatchOutput('[' + (i + 1) + '/' + stepList.length + '] ' + (step.raw || step.type) + ' ' + (step.part || '') + ' ' + (step.fileName || ''));
             try {
                 if (step.type === 'flash') {
-                    const cached = romImageCache[step.fileName];
-                    await runWebUsbFastbootCommand({ command: 'flash', partition: step.part, payload: cached.bytes });
+                    // 获取镜像 payload：兼容新旧两套文件查找体系
+                    var flashPayload = null;
+                    // 优先级1：step.fileObj（新体系，Blob 对象直接使用）
+                    if (step.fileObj && step.fileObj instanceof Blob) {
+                        flashPayload = step.fileObj;
+                    }
+                    // 优先级2：step.fileHandle → getFileFromHandle 恢复
+                    if (!flashPayload && step.fileHandle && typeof FileApi !== 'undefined' && FileApi.getFileFromHandle) {
+                        try { flashPayload = await FileApi.getFileFromHandle(step.fileHandle); }
+                        catch(e) { if (typeof writeLog === 'function') writeLog('Handle 恢复失败: ' + e.message, 'warn'); }
+                    }
+                    // 优先级3：webusbScriptFileMap 缓存查找
+                    if (!flashPayload && typeof webusbScriptFileMap !== 'undefined' && webusbScriptFileMap && step.imagePath) {
+                        flashPayload = webusbScriptFileMap.get(step.imagePath);
+                    }
+                    // 优先级4：romImageCache 旧体系（按 fileName 查找）
+                    if (!flashPayload && step.fileName) {
+                        const cached = romImageCache[step.fileName];
+                        if (cached && cached.bytes) flashPayload = cached.bytes;
+                    }
+                    // 优先级5：FileApi._resolveFileHandle 路径解析
+                    if (!flashPayload && step.imagePath && typeof FileApi !== 'undefined' && FileApi._resolveFileHandle) {
+                        try {
+                            var fh = await FileApi._resolveFileHandle(step.imagePath);
+                            var resolvedFile = await fh.getFile();
+                            if (resolvedFile) {
+                                flashPayload = resolvedFile;
+                                if (typeof webusbScriptFileMap !== 'undefined' && webusbScriptFileMap) {
+                                    webusbScriptFileMap.set(step.imagePath, resolvedFile);
+                                }
+                            }
+                        } catch(e) { if (typeof writeLog === 'function') writeLog('路径解析失败: ' + step.imagePath + ' — ' + e.message, 'warn'); }
+                    }
+                    if (!flashPayload) {
+                        throw new Error('无法获取镜像: ' + (step.imagePath || step.fileName || step.part || ''));
+                    }
+                    await runWebUsbFastbootCommand({ command: 'flash', partition: step.part, payload: flashPayload });
                 } else if (step.type === 'erase') {
                     if (typeof webusbEraseWithFallback === 'function') {
                         await webusbEraseWithFallback(step.part);

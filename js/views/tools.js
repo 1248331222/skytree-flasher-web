@@ -88,9 +88,6 @@ async function disableVbmeta() {
     const pos = paramPos ? paramPos.value : 'after';
     const disableFlags = '--disable-verity --disable-verification';
 
-    const extraAfter = pos === 'after' ? disableFlags : '';
-    const extraBefore = pos === 'before' ? disableFlags : '';
-
     const cmdDesc = pos === 'before'
         ? `fastboot ${disableFlags} flash vbmeta 镜像`
         : `fastboot flash vbmeta 镜像 ${disableFlags}`;
@@ -111,7 +108,22 @@ async function disableVbmeta() {
                 setModuleStatus('toolbox', 'WebUSB vbmeta刷写失败：镜像文件不可用，请重新选择。', 'err');
                 return;
             }
-            await webusbFastboot.flash('vbmeta', fileObj, p => updateModuleProgress('toolbox', p, 'WebUSB刷写 vbmeta'));
+            // 修改 vbmeta 头部 flags 字段，关闭 verity 和 verification
+            var arrayBuffer = await fileObj.arrayBuffer();
+            var bytes = new Uint8Array(arrayBuffer);
+            var flashPayload = fileObj;
+            if (bytes.length >= 124 &&
+                bytes[0] === 0x41 && bytes[1] === 0x56 &&
+                bytes[2] === 0x42 && bytes[3] === 0x30) { // "AVB0"
+                var dv = new DataView(arrayBuffer);
+                var currentFlags = dv.getUint32(120, true); // little-endian
+                dv.setUint32(120, currentFlags | 0x3, true); // 设置 bit0 + bit1
+                flashPayload = new Blob([arrayBuffer], { type: 'application/octet-stream' });
+                writeLog('已修改 vbmeta flags: ' + currentFlags.toString(16) + ' -> ' + (currentFlags | 0x3).toString(16), 'info');
+            } else {
+                writeLog('警告：镜像不是有效的 vbmeta 格式（缺少 AVB0 魔数），将直接刷写原始文件', 'warn');
+            }
+            await webusbFastboot.flash('vbmeta', flashPayload, p => updateModuleProgress('toolbox', p, 'WebUSB刷写 vbmeta'));
             updateModuleProgress('toolbox', 100, 'vbmeta 已刷入');
             setModuleStatus('toolbox', 'WebUSB已刷入 vbmeta，校验关闭完成。', 'ok');
             showToast('WebUSB vbmeta 关闭校验完成');

@@ -447,10 +447,16 @@
                     payload = step.fileObj;
                 } else if (step.fileHandle && typeof FileApi !== 'undefined' && FileApi.getFileFromHandle) {
                     try { payload = await FileApi.getFileFromHandle(step.fileHandle); }
-                    catch(e) { return { success: false, output: '文件访问权限失效: ' + e.message }; }
+                    catch(e) {
+                        if (typeof writeLog === 'function') writeLog('文件 Handle 权限失效，尝试其他查找方式: ' + e.message, 'warn');
+                    }
                 }
 
                 if (payload) {
+                    // 成功获取文件后缓存到 webusbScriptFileMap，供后续步骤复用
+                    if (typeof webusbScriptFileMap !== 'undefined' && webusbScriptFileMap && imagePath) {
+                        webusbScriptFileMap.set(imagePath, payload);
+                    }
                     if (typeof runWebUsbFastbootCommand !== 'function') return { success: false, output: 'WebUSB 模块未加载' };
                     await runWebUsbFastbootCommand({ command: 'flash', partition: partition, payload: payload });
                     return { success: true, output: '已刷写 ' + partition };
@@ -472,11 +478,17 @@
                         var fh = await FileApi._resolveFileHandle(imagePath);
                         var resolvedFile = await fh.getFile();
                         if (resolvedFile) {
+                            // 缓存到 webusbScriptFileMap 供后续步骤复用
+                            if (typeof webusbScriptFileMap !== 'undefined' && webusbScriptFileMap) {
+                                webusbScriptFileMap.set(imagePath, resolvedFile);
+                            }
                             if (typeof runWebUsbFastbootCommand !== 'function') return { success: false, output: 'WebUSB 模块未加载' };
                             await runWebUsbFastbootCommand({ command: 'flash', partition: partition, payload: resolvedFile });
                             return { success: true, output: '已刷写 ' + partition };
                         }
-                    } catch(e) { /* 路径解析失败 */ }
+                    } catch(e) {
+                        if (typeof writeLog === 'function') writeLog('路径解析失败: ' + imagePath + ' — ' + e.message, 'warn');
+                    }
                 }
 
                 return { success: false, output: '无法获取镜像文件 ' + (imagePath || '') + '，请在工作台选择文件后执行' };
@@ -487,7 +499,7 @@
                 var mode = args[1] || '';
                 if (typeof runWebUsbFastbootCommand !== 'function') return { success: false, output: 'WebUSB 模块未加载' };
                 try {
-                    await runWebUsbFastbootCommand({ command: 'reboot', mode: mode });
+                    await runWebUsbFastbootCommand({ command: 'reboot', target: mode });
                     return { success: true, output: '设备重启中...' };
                 } catch(e) {
                     return { success: false, output: '重启失败: ' + e.message };
@@ -513,7 +525,7 @@
                 if (!varName) return { success: false, output: 'getvar 命令缺少变量名' };
                 if (typeof runWebUsbFastbootCommand !== 'function') return { success: false, output: 'WebUSB 模块未加载' };
                 try {
-                    var val = await runWebUsbFastbootCommand({ command: 'getvar', name: varName });
+                    var val = await runWebUsbFastbootCommand({ command: 'getvar', variable: varName });
                     return { success: true, output: varName + ': ' + val };
                 } catch(e) {
                     return { success: false, output: '查询失败: ' + e.message };
@@ -538,7 +550,7 @@
         if (type === 'reboot') {
             if (typeof runWebUsbFastbootCommand !== 'function') return { success: false, output: 'WebUSB 模块未加载' };
             try {
-                await runWebUsbFastbootCommand({ command: 'reboot', mode: step.target || '' });
+                await runWebUsbFastbootCommand({ command: 'reboot', target: step.target || '' });
                 return { success: true, output: '设备重启中...' };
             } catch(e) {
                 return { success: false, output: '重启失败: ' + e.message };
@@ -958,6 +970,7 @@
                 if (_execState === 'running') return;
                 var idx = parseInt(this.getAttribute('data-del-idx'));
                 _parsedSteps.splice(idx, 1);
+                _stepTemplates.splice(idx, 1);
                 renderStepList();
             };
         }

@@ -22,6 +22,7 @@ var FileApi = (function() {
                     var getReq = store.get(key);
                     getReq.onsuccess = function() { resolve(getReq.result || null); };
                     getReq.onerror = function() { resolve(null); };
+                    tx.oncomplete = function() { db.close(); };
                 };
                 req.onerror = function() { resolve(null); };
             } catch(e) { resolve(null); }
@@ -40,8 +41,8 @@ var FileApi = (function() {
                     var tx = db.transaction(storeName, 'readwrite');
                     var store = tx.objectStore(storeName);
                     store.put(value, key);
-                    tx.oncomplete = function() { resolve(true); };
-                    tx.onerror = function() { resolve(false); };
+                    tx.oncomplete = function() { db.close(); resolve(true); };
+                    tx.onerror = function() { db.close(); resolve(false); };
                 };
                 req.onerror = function() { resolve(false); };
             } catch(e) { resolve(false); }
@@ -239,9 +240,15 @@ var FileApi = (function() {
         // 检查权限
         var perm = await fileHandle.queryPermission({ mode: 'read' });
         if (perm !== 'granted') {
-            perm = await fileHandle.requestPermission({ mode: 'read' });
+            // 尝试请求权限（需要用户手势，无手势时返回 null 而非抛异常）
+            try {
+                perm = await fileHandle.requestPermission({ mode: 'read' });
+            } catch(e) {
+                // requestPermission 可能因无用户手势而失败，返回 null 让调用方降级
+                return null;
+            }
         }
-        if (perm !== 'granted') throw new Error('文件访问权限被拒绝');
+        if (perm !== 'granted') return null;
         return await fileHandle.getFile();
     }
 

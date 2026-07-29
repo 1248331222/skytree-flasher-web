@@ -1,7 +1,51 @@
 // flash_tool/static/js/changelog.js
 // 更新日志内容（从 index.html 提取，减少 HTML 体积）
 
-const CHANGELOG_TEXT = `v4.0.20 (2026-07-26)
+const CHANGELOG_TEXT = `v4.0.22 (2026-07-29)
+- 修复：webusbScriptFileMap 永远为空（死代码路径）
+  · 原因：仅有 .get() 读取逻辑，无任何 .set() 写入逻辑，第三级文件查找永远是空 Map
+  · 修复：batch-new.js 和 workbench.js 在成功获取文件后缓存到 webusbScriptFileMap
+  · 效果：同一镜像路径在后续步骤中可直接从 Map 命中，避免重复路径解析
+- 修复：getFileFromHandle 权限失败时阻断整个回退链
+  · 原因：页面刷新后 Handle 权限被撤销，requestPermission 需用户手势但在批量执行中无法触发
+  · 原代码抛异常导致 batch-new.js 直接 return 失败，不再尝试后续的路径解析
+  · 修复：getFileFromHandle 权限不足时返回 null 而非抛异常，让调用方平滑降级到路径解析
+  · batch-new.js 中 catch 块也改为记录日志后继续回退，而非直接 return 失败
+- 修复：doWebUsbBatchFlash 与 batch-new.js/workbench.js 两套文件查找体系不一致
+  · 原因：doWebUsbBatchFlash 仅检查 romImageCache[step.fileName]，不识别 fileObj/imagePath
+  · 步骤由 batch-new.js 创建（有 imagePath 无 fileName）时，validateWebUsbScriptImages 误报缺失
+  · 修复：validateWebUsbScriptImages 兼容 fileObj/fileHandle/webusbScriptFileMap/imagePath
+  · 修复：doWebUsbBatchFlash 的 flash 执行改为五级回退获取 payload（fileObj→handle→map→romImageCache→路径解析）
+- 修复：多处文件查找错误被静默吞掉，用户无法定位问题
+  · batch-new.js 路径解析 catch 块：从 /* 路径解析失败 */ 改为 writeLog 记录具体路径和错误
+  · workbench.js _wbResolveFileFromRoot：目录不存在和文件不存在分别记录日志，含路径上下文
+  · workbench.js flash 执行：handle 恢复失败和路径解析失败均记录 warn 日志
+
+v4.0.21 (2026-07-29)
+- 修复：USB 超时定时器泄漏（receiveWithTimeout / readTransferWithTimeout / sendWithTimeout）
+  · 原因：Promise.race 中 setTimeout 创建的定时器在操作完成后未被清除，导致定时器堆积
+  · 修复：使用 try/finally 确保 clearTimeout 在操作完成或超时后被调用
+- 修复：batch-new.js 命令字段名与 webusb.js 不匹配
+  · reboot 命令使用 mode 字段，但 webusb.js 期望 target → 统一为 target
+  · getvar 命令使用 name 字段，但 webusb.js 期望 variable → 统一为 variable
+- 修复：步骤删除后 _stepTemplates 未同步 splice，导致参数实时替换索引错位
+- 修复：parser-runner.js WebDAV 配置字段名不兼容
+  · 同时支持 url/user/pass 和 webdav_url/webdav_user/webdav_pass 两种字段名
+- 修复：workbench.js 导入/导出依赖后端 API（/api/workbench/import, /api/workbench/export）
+  · 替换为 File System Access API（showSaveFilePicker / showOpenFilePicker）
+  · 提供 Blob 下载和 input[type=file] 回退方案
+- 安全：移除 parser-manager.js 中硬编码的 WebDAV 凭据（坚果云账号密码）
+- 修复：file-api.js IndexedDB 连接泄漏（_idbGet / _idbPut 未关闭数据库连接）
+- 修复：tools.js vbmeta 关闭校验功能未实际修改镜像 flags
+  · 原因：计算了 --disable-verity --disable-verification 标志但未应用到镜像数据
+  · 修复：读取 vbmeta 文件 ArrayBuffer，在 offset 120 设置 flags 字段 bit0+bit1（0x3）
+  · 验证 AVB0 魔数，非 vbmeta 格式时警告并直接刷写原始文件
+- 修复：device_info.js updateBtnState 访问不存在的 DOM 元素导致 TypeError
+  · batchFlashBtn / clearBatchStepsBtn 等元素可能不存在于当前页面
+  · 修复：统一使用 setDisabled 辅助函数进行 null 安全访问
+- 优化：detectDeviceMode 检查所有 alternate settings（兼容 Pixel 7 等多 alternate 设备）
+
+v4.0.20 (2026-07-26)
 - 修复：SH 脚本 $* 参数占位符无法识别
   · 原因：前端占位符正则 _PARAM_RE 缺少 $* 匹配，导致 SH 脚本含 $* 时不显示参数输入框
   · 修复：正则更新为 /%\*|%[1-9]|\$[@*]|\$[1-9]/，同时覆盖 BAT(%* %1-%9) 和 SH($@ $* $1-$9)

@@ -269,7 +269,7 @@ async function _wbResolveFileFromRoot(imagePath) {
         try {
             currentDir = await currentDir.getDirectoryHandle(parts[i]);
         } catch(e) {
-            // 目录不存在
+            if (typeof writeLog === 'function') writeLog('目录不存在: ' + parts[i] + '（路径: ' + imagePath + '）— ' + (e.message || e), 'warn');
             return null;
         }
     }
@@ -280,6 +280,7 @@ async function _wbResolveFileFromRoot(imagePath) {
         var fileHandle = await currentDir.getFileHandle(fileName);
         return await fileHandle.getFile();
     } catch(e) {
+        if (typeof writeLog === 'function') writeLog('文件不存在: ' + fileName + '（目录: ' + parts.slice(0, -1).join('/') + '）— ' + (e.message || e), 'warn');
         return null;
     }
 }
@@ -509,23 +510,38 @@ async function _wbExportConfig() {
         return;
     }
     try {
-        // 使用文件选择器选择导出目录
-        var dirResult = await FileApi.pickFile({ mode: 'dir' });
-        if (!dirResult || !dirResult.path) return;
-        var exportPath = dirResult.path.replace(/\/+$/, '') + '/' + _wbCurrentConfig + '.json';
-        var resp = await fetch('/api/workbench/export', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: _wbCurrentConfig, path: exportPath }),
-        });
-        var data = await resp.json();
-        if (data.success) {
-            _wbSetStatus('工作台状态：配置已导出到 ' + data.path, 'ok');
+        // 从当前配置加载步骤数据
+        var config = await _wbWebusbLoadConfig(_wbCurrentConfig);
+        if (!config) {
+            _wbSetStatus('工作台状态：无法读取当前配置', 'err');
+            return;
+        }
+        var exportData = JSON.stringify({ name: _wbCurrentConfig, steps: config.steps }, null, 2);
+        // 使用 File System Access API 导出文件
+        if (window.showSaveFilePicker) {
+            var handle = await window.showSaveFilePicker({
+                suggestedName: _wbCurrentConfig + '.json',
+                types: [{ accept: { 'application/json': ['.json'] } }]
+            });
+            var writable = await handle.createWritable();
+            await writable.write(exportData);
+            await writable.close();
+            _wbSetStatus('工作台状态：配置已导出到 ' + handle.name, 'ok');
             if (typeof showToast === 'function') showToast('配置已导出');
         } else {
-            _wbSetStatus('工作台状态：导出失败 - ' + (data.error || '未知错误'), 'err');
+            // 回退：使用 Blob 下载
+            var blob = new Blob([exportData], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = _wbCurrentConfig + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            _wbSetStatus('工作台状态：配置已导出', 'ok');
+            if (typeof showToast === 'function') showToast('配置已导出');
         }
     } catch(e) {
+        if (e.name === 'AbortError') return;
         _wbSetStatus('工作台状态：导出异常 - ' + e.message, 'err');
     }
 }
@@ -533,23 +549,46 @@ async function _wbExportConfig() {
 // 导入配置
 async function _wbImportConfig() {
     try {
-        var file = await FileApi.pickFile({ filter: '.json' });
-        if (!file || !file.path) return;
-        var resp = await fetch('/api/workbench/import', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: file.path }),
-        });
-        var data = await resp.json();
-        if (data.success) {
-            await _wbLoadConfigs();
-            _wbSelectConfig(data.name);
-            _wbSetStatus('工作台状态：配置「' + data.name + '」已导入（' + data.step_count + ' 步）', 'ok');
-            if (typeof showToast === 'function') showToast('配置已导入');
+        // 使用 File System Access API 选择文件
+        if (window.showOpenFilePicker) {
+            var handles = await window.showOpenFilePicker({
+                types: [{ accept: { 'application/json': ['.json'] } }]
+            });
+            if (!handles || handles.length === 0) return;
+            var file = await handles[0].getFile();
+            var content = JSON.parse(await file.text());
+            var configName = content.name || handles[0].name.replace(/\.json$/i, '');
+            var steps = content.steps || [];
+            var ok = await _wbSaveConfig(configName, steps);
+            if (ok) {
+                _wbSetStatus('工作台状态：配置「' + configName + '」已导入（' + steps.length + ' 步）', 'ok');
+                if (typeof showToast === 'function') showToast('配置已导入');
+            } else {
+                _wbSetStatus('工作台状态：导入失败 - 保存配置失败', 'err');
+            }
         } else {
-            _wbSetStatus('工作台状态：导入失败 - ' + (data.error || '未知错误'), 'err');
+            // 回退：使用 input[type=file]
+            var input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = async function() {
+                if (!input.files || !input.files[0]) return;
+                var text = await input.files[0].text();
+                var content = JSON.parse(text);
+                var configName = content.name || input.files[0].name.replace(/\.json$/i, '');
+                var steps = content.steps || [];
+                var ok = await _wbSaveConfig(configName, steps);
+                if (ok) {
+                    _wbSetStatus('工作台状态：配置「' + configName + '」已导入（' + steps.length + ' 步）', 'ok');
+                    if (typeof showToast === 'function') showToast('配置已导入');
+                } else {
+                    _wbSetStatus('工作台状态：导入失败 - 保存配置失败', 'err');
+                }
+            };
+            input.click();
         }
     } catch(e) {
+        if (e.name === 'AbortError') return;
         _wbSetStatus('工作台状态：导入异常 - ' + e.message, 'err');
     }
 }
@@ -785,7 +824,16 @@ async function _wbRunFastbootCommand(step) {
                     flashPayload = await FileApi.getFileFromHandle(step.fileHandle);
                     flashPayloadSize = flashPayload ? flashPayload.size : 0;
                 } catch(handleErr) {
-                    // handle 失效，尝试路径解析
+                    if (typeof writeLog === 'function') writeLog('文件 Handle 恢复失败，尝试路径解析: ' + (handleErr.message || handleErr), 'warn');
+                }
+            }
+
+            // 尝试从 webusbScriptFileMap 查找（其他步骤可能已缓存）
+            if (!flashPayload && imagePath && typeof webusbScriptFileMap !== 'undefined' && webusbScriptFileMap) {
+                var cachedFile = webusbScriptFileMap.get(imagePath);
+                if (cachedFile) {
+                    flashPayload = cachedFile;
+                    flashPayloadSize = cachedFile.size;
                 }
             }
 
@@ -796,10 +844,14 @@ async function _wbRunFastbootCommand(step) {
                     if (resolvedFile) {
                         flashPayload = resolvedFile;
                         flashPayloadSize = resolvedFile.size;
+                        // 缓存到 webusbScriptFileMap 供后续步骤复用
+                        if (typeof webusbScriptFileMap !== 'undefined' && webusbScriptFileMap) {
+                            webusbScriptFileMap.set(imagePath, resolvedFile);
+                        }
                         _wbSetStatus('工作台状态：通过路径解析读取文件 ' + imagePath + ' (' + (flashPayloadSize / 1024 / 1024).toFixed(1) + ' MB)', 'info');
                     }
                 } catch(resolveErr) {
-                    // 路径解析失败，继续到下面的错误提示
+                    if (typeof writeLog === 'function') writeLog('路径解析失败: ' + imagePath + ' — ' + (resolveErr.message || resolveErr), 'warn');
                 }
             }
 

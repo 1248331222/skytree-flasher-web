@@ -350,34 +350,49 @@ async send(data) {
      * Throws TimeoutError if the data does not arrive in time.
      */
     async receiveWithTimeout(length, timeoutMs = DEFAULT_TIMEOUT_MS) {
-        return Promise.race([
-            this.receive(length),
-            new Promise((_, reject) => {
-                setTimeout(() => reject(new TimeoutError(`USB receive timed out after ${timeoutMs}ms`, timeoutMs)), timeoutMs);
-            }),
-        ]);
+        let timeoutId;
+        try {
+            return await Promise.race([
+                this.receive(length),
+                new Promise((_, reject) => {
+                    timeoutId = setTimeout(() => reject(new TimeoutError(`USB receive timed out after ${timeoutMs}ms`, timeoutMs)), timeoutMs);
+                }),
+            ]);
+        } finally {
+            clearTimeout(timeoutId);
+        }
     }
     /**
      * Read a single USB transfer with a timeout.
      */
     async readTransferWithTimeout(maxLength = USB_RECEIVE_BUFFER_SIZE, timeoutMs = DEFAULT_TIMEOUT_MS) {
-        return Promise.race([
-            this.readTransfer(maxLength),
-            new Promise((_, reject) => {
-                setTimeout(() => reject(new TimeoutError(`USB receive timed out after ${timeoutMs}ms`, timeoutMs)), timeoutMs);
-            }),
-        ]);
+        let timeoutId;
+        try {
+            return await Promise.race([
+                this.readTransfer(maxLength),
+                new Promise((_, reject) => {
+                    timeoutId = setTimeout(() => reject(new TimeoutError(`USB receive timed out after ${timeoutMs}ms`, timeoutMs)), timeoutMs);
+                }),
+            ]);
+        } finally {
+            clearTimeout(timeoutId);
+        }
     }
     /**
      * Send bytes with a timeout.
      */
     async sendWithTimeout(data, timeoutMs = DEFAULT_TIMEOUT_MS) {
-        return Promise.race([
-            this.send(data),
-            new Promise((_, reject) => {
-                setTimeout(() => reject(new TimeoutError(`USB send timed out after ${timeoutMs}ms`, timeoutMs)), timeoutMs);
-            }),
-        ]);
+        let timeoutId;
+        try {
+            return await Promise.race([
+                this.send(data),
+                new Promise((_, reject) => {
+                    timeoutId = setTimeout(() => reject(new TimeoutError(`USB send timed out after ${timeoutMs}ms`, timeoutMs)), timeoutMs);
+                }),
+            ]);
+        } finally {
+            clearTimeout(timeoutId);
+        }
     }
     // ---- Getters ----
     get device() {

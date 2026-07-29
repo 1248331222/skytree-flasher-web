@@ -521,10 +521,10 @@ var ParserRunner = (function() {
     async function installFromWebdav(filename, webdavConfig) {
         try {
             var cfg = webdavConfig || {};
-            var baseUrl = cfg.url || '';
-            var user = cfg.user || '';
-            var pass = cfg.pass || '';
-            var remotePath = cfg.path || ('/' + filename);
+            var baseUrl = cfg.url || cfg.webdav_url || '';
+            var user = cfg.user || cfg.webdav_user || '';
+            var pass = cfg.pass || cfg.webdav_pass || '';
+            var remotePath = cfg.path || cfg.webdav_path || ('/' + filename);
             if (!baseUrl) throw new Error('未配置 WebDAV 地址');
 
             var fullUrl = baseUrl.replace(/\/+$/, '') + (remotePath.startsWith('/') ? remotePath : '/' + remotePath);
@@ -570,10 +570,10 @@ var ParserRunner = (function() {
     async function webdavListParsers(webdavConfig) {
         try {
             var cfg = webdavConfig || {};
-            var baseUrl = cfg.url || '';
-            var user = cfg.user || '';
-            var pass = cfg.pass || '';
-            var dirPath = cfg.dir || '/';
+            var baseUrl = cfg.url || cfg.webdav_url || '';
+            var user = cfg.user || cfg.webdav_user || '';
+            var pass = cfg.pass || cfg.webdav_pass || '';
+            var dirPath = cfg.dir || cfg.webdav_dir || '/';
             if (!baseUrl) throw new Error('未配置 WebDAV 地址');
 
             var fullUrl = baseUrl.replace(/\/+$/, '') + (dirPath.startsWith('/') ? dirPath : '/' + dirPath);

@@ -6,11 +6,11 @@
 
     var _pendingOverwrite = null; // 等待覆盖确认的文件信息
 
-    // WebDAV 默认配置
+    // WebDAV 默认配置（无硬编码凭据，用户需自行配置）
     var WD_DEFAULTS = {
-        url: 'https://dav.jianguoyun.com/dav/',
-        user: '1248331222@qq.com',
-        pass: 'a9a69b5dz6ka58r4',
+        url: '',
+        user: '',
+        pass: '',
     };
 
     // ============ 解析器开发指南（内嵌） ============
